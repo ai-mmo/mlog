@@ -1,0 +1,18 @@
+默认配置如下：
+
+```yaml
+zap:
+  level: info
+  prefix: ''
+  format: console
+  director: ./logs
+  encode-level: CapitalColorLevelEncoder
+  stacktrace-key: stacktrace
+  retention-day: 30 #日志保留天数
+  show-line: true #显示行号
+  log-in-console: true #是否输出到控制台
+  max-size: 100 #每个日志文件保存的最大大小 单位：M
+  enable-split: true #是否开启分片
+  enable-compress: true #是否压缩
+  use-relative-path: true #使用相对路径显示
+  build-root-path: /Users/homework/mars/aimmo #编译根目录路径，用于更准确的相对路径计算
