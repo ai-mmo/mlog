@@ -41,6 +41,17 @@ func InitialZap(name string, id uint64, logLevel string, zc ZapConfig) {
 		if zapLogger != nil {
 			zapLogger.Sync() // 兼容性：同时同步旧的logger
 		}
+
+		// 关闭现有的 ZapCore 实例，防止 lumberjack goroutine 泄露
+		coreMutex.Lock()
+		for _, core := range zapCores {
+			if core != nil {
+				if err := core.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "关闭现有 ZapCore 失败: %v\n", err)
+				}
+			}
+		}
+		coreMutex.Unlock()
 	}
 
 	zapConfig = zc
@@ -205,6 +216,19 @@ func Close() {
 			fmt.Fprintf(os.Stderr, "日志同步失败: %v\n", err)
 		}
 	}
+
+	// 关闭所有 ZapCore 实例，防止 lumberjack goroutine 泄露
+	coreMutex.Lock()
+	for _, core := range zapCores {
+		if core != nil {
+			if err := core.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "关闭 ZapCore 失败: %v\n", err)
+			}
+		}
+	}
+	// 清空 zapCores 切片
+	zapCores = nil
+	coreMutex.Unlock()
 
 	// 清理优化的logger指针
 	atomic.StorePointer(&loggerPtr, nil)

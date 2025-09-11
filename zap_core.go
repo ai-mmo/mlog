@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/ai-mmo/lumberjack"
 	"go.uber.org/zap"
@@ -15,23 +16,37 @@ type ZapCore struct {
 	serviceName string // 保存创建时的服务名称
 	serviceID   uint64 // 保存创建时的服务ID
 	zapcore.Core
+	// 添加 lumberjack logger 引用，用于正确关闭
+	lumberjackLogger *lumberjack.Logger
+	// 缓存编码器，避免重复创建
+	encoder zapcore.Encoder
+	// 缓存特殊目录的 lumberjack logger，避免重复创建和 goroutine 泄露
+	specialLoggers map[string]*lumberjack.Logger
+	// 保护 specialLoggers 的互斥锁
+	specialLoggersMutex sync.RWMutex
 }
 
 // NewZapCoreWithService 创建带有指定服务信息的 ZapCore（优化版本）
 func NewZapCoreWithService(level zapcore.Level, svcName string, svcID uint64) *ZapCore {
 	// 直接使用传入的服务信息，避免访问全局变量
 	entity := &ZapCore{
-		level:       level,
-		serviceName: svcName,
-		serviceID:   svcID,
+		level:          level,
+		serviceName:    svcName,
+		serviceID:      svcID,
+		specialLoggers: make(map[string]*lumberjack.Logger),
 	}
 	syncer := entity.WriteSyncer()
+
+	// 创建并缓存编码器，避免重复创建
+	encoder := zapConfig.Encoder()
+	entity.encoder = encoder
+
 	// 使用动态级别控制器
 	levelEnabler := zap.LevelEnablerFunc(func(l zapcore.Level) bool {
 		// 如果当前日志级别小于等于配置的级别，则允许输出
 		return l == level && l >= atomicLevel.Level()
 	})
-	entity.Core = zapcore.NewCore(zapConfig.Encoder(), syncer, levelEnabler)
+	entity.Core = zapcore.NewCore(encoder, syncer, levelEnabler)
 	return entity
 }
 
@@ -61,13 +76,47 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 		os.MkdirAll(logDir, 0755)
 	}
 
-	// 创建 lumberjack logger
-	lumberjackLogger := &lumberjack.Logger{
-		Filename:   filepath.Join(logDir, z.level.String()+".log"),
-		MaxSize:    zapConfig.MaxSize,        // MB
-		MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
-		MaxAge:     zapConfig.RetentionDay,   // 保留天数
-		Compress:   zapConfig.EnableCompress, // 是否压缩
+	var lumberjackLogger *lumberjack.Logger
+
+	// 如果是特殊目录，使用缓存的 logger 避免重复创建和 goroutine 泄露
+	if len(formats) > 0 && formats[0] != "" {
+		// 构建缓存键：目录路径 + 级别
+		cacheKey := filepath.Join(logDir, z.level.String()+".log")
+
+		z.specialLoggersMutex.RLock()
+		cachedLogger, exists := z.specialLoggers[cacheKey]
+		z.specialLoggersMutex.RUnlock()
+
+		if exists {
+			// 使用缓存的 logger
+			lumberjackLogger = cachedLogger
+		} else {
+			// 创建新的 logger 并缓存
+			lumberjackLogger = &lumberjack.Logger{
+				Filename:   filepath.Join(logDir, z.level.String()+".log"),
+				MaxSize:    zapConfig.MaxSize,        // MB
+				MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
+				MaxAge:     zapConfig.RetentionDay,   // 保留天数
+				Compress:   zapConfig.EnableCompress, // 是否压缩
+			}
+
+			// 缓存新创建的 logger
+			z.specialLoggersMutex.Lock()
+			z.specialLoggers[cacheKey] = lumberjackLogger
+			z.specialLoggersMutex.Unlock()
+		}
+	} else {
+		// 主要的 lumberjack logger（非特殊目录）
+		lumberjackLogger = &lumberjack.Logger{
+			Filename:   filepath.Join(logDir, z.level.String()+".log"),
+			MaxSize:    zapConfig.MaxSize,        // MB
+			MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
+			MaxAge:     zapConfig.RetentionDay,   // 保留天数
+			Compress:   zapConfig.EnableCompress, // 是否压缩
+		}
+
+		// 保存主要的 lumberjack logger 引用，用于后续关闭
+		z.lumberjackLogger = lumberjackLogger
 	}
 
 	// 同步日志写入 到 控制台
@@ -123,8 +172,9 @@ func (z *ZapCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	// 根据是否有特殊目录字段来决定使用哪个 Core
 	if hasSpecialDirectory {
 		// 创建临时的 Core 用于这次写入，不影响原始 Core
+		// 使用缓存的编码器，避免重复创建
 		syncer := z.createWriteSyncer(z.serviceName, z.serviceID, specialDirectory)
-		tempCore := zapcore.NewCore(zapConfig.Encoder(), syncer, z.level)
+		tempCore := zapcore.NewCore(z.encoder, syncer, z.level)
 		return tempCore.Write(entry, filteredFields)
 	} else {
 		// 使用原始的 Core（写入主日志目录）
@@ -134,4 +184,36 @@ func (z *ZapCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 
 func (z *ZapCore) Sync() error {
 	return z.Core.Sync()
+}
+
+// Close 关闭 ZapCore，包括关闭 lumberjack logger 以防止 goroutine 泄露
+func (z *ZapCore) Close() error {
+	// 先同步日志
+	if err := z.Core.Sync(); err != nil {
+		// 记录同步错误，但继续关闭流程
+		fmt.Fprintf(os.Stderr, "ZapCore 同步失败: %v\n", err)
+	}
+
+	// 关闭主要的 lumberjack logger
+	if z.lumberjackLogger != nil {
+		if err := z.lumberjackLogger.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "关闭主要 lumberjack logger 失败: %v\n", err)
+		}
+		z.lumberjackLogger = nil
+	}
+
+	// 关闭所有缓存的特殊目录 logger
+	z.specialLoggersMutex.Lock()
+	for cacheKey, logger := range z.specialLoggers {
+		if logger != nil {
+			if err := logger.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "关闭特殊目录 lumberjack logger 失败 [%s]: %v\n", cacheKey, err)
+			}
+		}
+	}
+	// 清空缓存
+	z.specialLoggers = make(map[string]*lumberjack.Logger)
+	z.specialLoggersMutex.Unlock()
+
+	return nil
 }
