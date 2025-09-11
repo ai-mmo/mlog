@@ -99,20 +99,37 @@ func (z *ZapCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	// 创建一个新的 fields 切片，用于存储处理后的字段
 	filteredFields := make([]zapcore.Field, 0, len(fields))
 
+	// 检查是否有特殊目录字段，但不修改原始 Core
+	var specialDirectory string
+	hasSpecialDirectory := false
+
 	for i := 0; i < len(fields); i++ {
-		if fields[i].Key == "business" || fields[i].Key == "folder" || fields[i].Key == "directory" {
-			// 使用该 Core 创建时保存的服务信息
-			syncer := z.createWriteSyncer(z.serviceName, z.serviceID, fields[i].String)
-			z.Core = zapcore.NewCore(zapConfig.Encoder(), syncer, z.level)
+		if fields[i].Key == "business" || fields[i].Key == "folder" {
+			// business 和 folder 字段总是创建子目录
+			specialDirectory = fields[i].String
+			hasSpecialDirectory = true
 			// 不将此字段添加到 filteredFields 中，实现移除效果
+		} else if fields[i].Key == "directory" {
+			// directory 字段创建子目录（仅对当前日志生效）
+			specialDirectory = fields[i].String
+			hasSpecialDirectory = true
+			// 不将此字段添加到 filteredFields 中，避免在日志内容中显示
 		} else {
 			// 保留其他字段
 			filteredFields = append(filteredFields, fields[i])
 		}
 	}
 
-	// 使用过滤后的字段调用底层 Core 的 Write 方法
-	return z.Core.Write(entry, filteredFields)
+	// 根据是否有特殊目录字段来决定使用哪个 Core
+	if hasSpecialDirectory {
+		// 创建临时的 Core 用于这次写入，不影响原始 Core
+		syncer := z.createWriteSyncer(z.serviceName, z.serviceID, specialDirectory)
+		tempCore := zapcore.NewCore(zapConfig.Encoder(), syncer, z.level)
+		return tempCore.Write(entry, filteredFields)
+	} else {
+		// 使用原始的 Core（写入主日志目录）
+		return z.Core.Write(entry, filteredFields)
+	}
 }
 
 func (z *ZapCore) Sync() error {
