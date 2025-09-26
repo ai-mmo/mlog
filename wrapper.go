@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.yaml.in/yaml/v3"
 )
 
 var (
@@ -29,7 +30,23 @@ var (
 	errorEnabledCache int32
 )
 
-func InitialZap(name string, id uint64, logLevel string, zc ZapConfig) {
+func LoadConfig(configPath string) (*ZapConfig, error) {
+	// 读取配置文件
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	var config ZapConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	zapConfig = config
+	return &config, nil
+}
+
+func InitialZap(name string, id uint64, logLevel string, zc *ZapConfig) {
 	globalMutex.Lock()
 	defer globalMutex.Unlock()
 
@@ -54,8 +71,9 @@ func InitialZap(name string, id uint64, logLevel string, zc ZapConfig) {
 		coreMutex.Unlock()
 	}
 
-	zapConfig = zc
-
+	if zc != nil {
+		zapConfig = *zc
+	}
 	// 如果提供了 logLevel 参数，优先使用它
 	finalLevel := zapConfig.Level
 	if logLevel != "" {
