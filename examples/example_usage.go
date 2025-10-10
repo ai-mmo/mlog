@@ -68,9 +68,9 @@ func exampleCustomFileName() {
 	mlog.InitialZap("custom_app", 2001, "info", config)
 
 	// 记录日志
-	mlog.Info("应用启动", "version", "1.0.0", "port", 8080)
-	mlog.Warn("配置项缺失", "key", "database.host", "default", "localhost")
-	mlog.Error("连接失败", "service", "redis", "error", "connection timeout")
+	mlog.Info("应用启动 %s %s %s %d", "version", "1.0.0", "port", 8080)
+	mlog.Warn("配置项缺失 %s %s %s %s", "key", "database.host", "default", "localhost")
+	mlog.Error("连接失败 %s %s %s %s", "service", "redis", "error", "connection timeout")
 
 	println("所有日志都写入到: ./example_logs/custom_name/2001/custom_app/application.log")
 
