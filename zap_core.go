@@ -50,6 +50,23 @@ func NewZapCoreWithService(level zapcore.Level, svcName string, svcID uint64) *Z
 	return entity
 }
 
+// getLogFileName 根据配置获取日志文件名
+// 如果启用了单文件模式，返回配置的单文件名或默认的 "all.log"
+// 否则返回基于日志级别的文件名，如 "debug.log"、"info.log" 等
+func (z *ZapCore) getLogFileName() string {
+	// 如果启用了单文件模式
+	if zapConfig.SingleFile {
+		// 如果配置了自定义文件名，使用自定义文件名
+		if zapConfig.SingleFileName != "" {
+			return zapConfig.SingleFileName
+		}
+		// 否则使用默认文件名
+		return "all.log"
+	}
+	// 按级别分文件模式，使用级别名称作为文件名
+	return z.level.String() + ".log"
+}
+
 func (z *ZapCore) WriteSyncer(formats ...string) zapcore.WriteSyncer {
 	return z.createWriteSyncer(z.serviceName, z.serviceID, formats...)
 }
@@ -78,10 +95,13 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 
 	var lumberjackLogger *lumberjack.Logger
 
+	// 获取日志文件名（根据配置决定是单文件还是按级别分文件）
+	logFileName := z.getLogFileName()
+
 	// 如果是特殊目录，使用缓存的 logger 避免重复创建和 goroutine 泄露
 	if len(formats) > 0 && formats[0] != "" {
-		// 构建缓存键：目录路径 + 级别
-		cacheKey := filepath.Join(logDir, z.level.String()+".log")
+		// 构建缓存键：目录路径 + 文件名
+		cacheKey := filepath.Join(logDir, logFileName)
 
 		z.specialLoggersMutex.RLock()
 		cachedLogger, exists := z.specialLoggers[cacheKey]
@@ -93,7 +113,7 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 		} else {
 			// 创建新的 logger 并缓存
 			lumberjackLogger = &lumberjack.Logger{
-				Filename:   filepath.Join(logDir, z.level.String()+".log"),
+				Filename:   filepath.Join(logDir, logFileName),
 				MaxSize:    zapConfig.MaxSize,        // MB
 				MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
 				MaxAge:     zapConfig.RetentionDay,   // 保留天数
@@ -108,7 +128,7 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 	} else {
 		// 主要的 lumberjack logger（非特殊目录）
 		lumberjackLogger = &lumberjack.Logger{
-			Filename:   filepath.Join(logDir, z.level.String()+".log"),
+			Filename:   filepath.Join(logDir, logFileName),
 			MaxSize:    zapConfig.MaxSize,        // MB
 			MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
 			MaxAge:     zapConfig.RetentionDay,   // 保留天数

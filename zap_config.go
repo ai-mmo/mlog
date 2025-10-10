@@ -33,6 +33,10 @@ type ZapConfig struct {
 	// 路径显示配置
 	UseRelativePath bool   `mapstructure:"use-relative-path" json:"use-relative-path" yaml:"use-relative-path"` // 使用相对路径显示（默认false 使用绝对路径）
 	BuildRootPath   string `mapstructure:"build-root-path" json:"build-root-path" yaml:"build-root-path"`       // 编译根目录路径，用于更准确的相对路径计算
+
+	// 单文件日志配置
+	SingleFile     bool   `mapstructure:"single-file" json:"single-file" yaml:"single-file"`                // 是否将所有级别的日志写入到同一个文件（默认false 按级别分文件）
+	SingleFileName string `mapstructure:"single-file-name" json:"single-file-name" yaml:"single-file-name"` // 单文件模式下的日志文件名（默认为 "all.log"）
 }
 
 // Levels
