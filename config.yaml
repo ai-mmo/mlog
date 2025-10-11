@@ -1,16 +1,20 @@
 zap:
-  level: info
-  prefix: ''
-  format: console
-  director: ./logs
-  encode-level: CapitalColorLevelEncoder
-  stacktrace-key: stacktrace
+  level: info #日志级别
+  prefix: '' #日志前缀
+  format: console #输出格式
+  director: ./logs #日志文件夹
+  encode-level: CapitalColorLevelEncoder #编码级
+  stacktrace-key: stacktrace #栈名
   retention-day: 30 #日志保留天数
   show-line: true #显示行号
   log-in-console: true #是否输出到控制台
   max-size: 100 #每个日志文件保存的最大大小 单位：M
+  max-backups: 0 #保留的备份文件数量
   enable-split: true #是否开启分片
   enable-compress: true #是否压缩
+  enable-async: true #是否开启异步日志
+  async-buffer-size: 1000000 #异步日志缓冲区大小
+  async-drop-on-full: false #缓冲区满时是否丢弃日志
   use-relative-path: false #使用相对路径显示
   build-root-path: ./ #编译根目录路径，用于更准确的相对路径计算
   single-file: false #是否将所有级别的日志写入到同一个文件（默认false 按级别分文件）
