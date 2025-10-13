@@ -171,24 +171,25 @@ func (z *ZapCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	// 检查是否有特殊目录字段，但不修改原始 Core
 	var specialDirectory string
 	hasSpecialDirectory := false
-
-	for i := 0; i < len(fields); i++ {
-		if fields[i].Key == "business" || fields[i].Key == "folder" {
-			// business 和 folder 字段总是创建子目录
-			specialDirectory = fields[i].String
-			hasSpecialDirectory = true
-			// 不将此字段添加到 filteredFields 中，实现移除效果
-		} else if fields[i].Key == "directory" {
-			// directory 字段创建子目录（仅对当前日志生效）
-			specialDirectory = fields[i].String
-			hasSpecialDirectory = true
-			// 不将此字段添加到 filteredFields 中，避免在日志内容中显示
-		} else {
-			// 保留其他字段
-			filteredFields = append(filteredFields, fields[i])
+	// 如果未启用了单文件模式，则需要检查是否有特殊目录，单文件模式不用检查
+	if !zapConfig.SingleFile {
+		for i := 0; i < len(fields); i++ {
+			if fields[i].Key == "business" || fields[i].Key == "folder" {
+				// business 和 folder 字段总是创建子目录
+				specialDirectory = fields[i].String
+				hasSpecialDirectory = true
+				// 不将此字段添加到 filteredFields 中，实现移除效果
+			} else if fields[i].Key == "directory" {
+				// directory 字段创建子目录（仅对当前日志生效）
+				specialDirectory = fields[i].String
+				hasSpecialDirectory = true
+				// 不将此字段添加到 filteredFields 中，避免在日志内容中显示
+			} else {
+				// 保留其他字段
+				filteredFields = append(filteredFields, fields[i])
+			}
 		}
 	}
-
 	// 根据是否有特殊目录字段来决定使用哪个 Core
 	if hasSpecialDirectory {
 		// 创建临时的 Core 用于这次写入，不影响原始 Core
