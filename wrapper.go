@@ -129,6 +129,16 @@ func InitialZap(name string, id uint64, logLevel string, zc *ZapConfig) {
 
 	// 标记为已初始化
 	atomic.StoreInt32(&initialized, 1)
+
+	// 仅在控制台模式输出初始化信息（简洁版本）
+	if zapConfig.LogInConsole {
+		asyncMode := "sync"
+		if zapConfig.EnableAsync {
+			asyncMode = "async"
+		}
+		fmt.Printf("[mlog] 初始化完成 service=%s id=%d level=%s mode=%s\n",
+			name, id, finalLevel, asyncMode)
+	}
 }
 
 func GLOG() *zap.Logger {
@@ -740,6 +750,10 @@ func isInteractiveTerminal() bool {
 
 // isHarmlessSyncError 检查是否为无害的同步错误
 func isHarmlessSyncError(err error) bool {
+	if err == nil {
+		return true
+	}
+
 	errStr := err.Error()
 
 	// 常见的无害错误模式
@@ -750,6 +764,11 @@ func isHarmlessSyncError(err error) bool {
 		"sync /dev/stderr: invalid argument",
 		"sync /dev/stdout: operation not supported",
 		"sync /dev/stderr: operation not supported",
+		"sync /dev/stdout: bad file descriptor",
+		"sync /dev/stderr: bad file descriptor",
+		"inappropriate ioctl",
+		"invalid argument",
+		"bad file descriptor",
 	}
 
 	for _, pattern := range harmlessPatterns {

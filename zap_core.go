@@ -209,16 +209,19 @@ func (z *ZapCore) Sync() error {
 
 // Close 关闭 ZapCore，包括关闭 lumberjack logger 以防止 goroutine 泄露
 func (z *ZapCore) Close() error {
-	// 先同步日志
+	// 先同步日志（忽略无害错误）
 	if err := z.Core.Sync(); err != nil {
-		// 记录同步错误，但继续关闭流程
-		fmt.Fprintf(os.Stderr, "ZapCore 同步失败: %v\n", err)
+		// 检查是否为无害错误
+		if !isHarmlessSyncError(err) {
+			// 只记录真正的错误
+			fmt.Fprintf(os.Stderr, "[mlog] ZapCore 同步失败: %v\n", err)
+		}
 	}
 
 	// 关闭主要的 lumberjack logger
 	if z.lumberjackLogger != nil {
 		if err := z.lumberjackLogger.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "关闭主要 lumberjack logger 失败: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[mlog] 关闭主要 lumberjack logger 失败: %v\n", err)
 		}
 		z.lumberjackLogger = nil
 	}
@@ -228,7 +231,7 @@ func (z *ZapCore) Close() error {
 	for cacheKey, logger := range z.specialLoggers {
 		if logger != nil {
 			if err := logger.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "关闭特殊目录 lumberjack logger 失败 [%s]: %v\n", cacheKey, err)
+				fmt.Fprintf(os.Stderr, "[mlog] 关闭特殊目录 lumberjack logger 失败 [%s]: %v\n", cacheKey, err)
 			}
 		}
 	}

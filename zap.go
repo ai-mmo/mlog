@@ -3,6 +3,7 @@ package mlog
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -22,25 +23,35 @@ var levelCache = map[string]zapcore.Level{
 	"fatal":  zapcore.FatalLevel,
 }
 
+// formatMessage 根据安全模式格式化消息
+func formatMessage(msg string, args []any, isAsync bool) string {
+	if len(args) == 0 {
+		return msg
+	}
+
+	// 根据安全模式决定使用哪种格式化方式
+	if shouldUseSafeFormat(isAsync) {
+		// 使用安全格式化
+		return SafeFormat(msg, args...)
+	}
+
+	// 使用高性能格式化
+	var sb strings.Builder
+	if err := formatToStringBuilder(&sb, msg, args...); err != nil {
+		// 格式化失败时返回原始消息
+		return msg
+	}
+	return sb.String()
+}
+
 func zapUpdateLevel(logLevel string) {
 	// 解析日志级别
 	level, err := zapcore.ParseLevel(logLevel)
 	if err != nil {
 		// 如果解析失败，使用默认的 info 级别
 		level = zapcore.InfoLevel
-		// 安全地记录错误
-		logger, ok := getLogger()
-		if ok {
-			// 为 UpdateLevel 调用创建带有正确 caller skip 的 logger
-			// 调用栈：用户代码 -> mlog.UpdateLevel() -> zapUpdateLevel() -> logger.Error()
-			// 需要跳过 2 层：zapUpdateLevel() 和 mlog.UpdateLevel()
-			loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
-			loggerWithSkip.Error("日志级别解析失败，使用默认的 info 级别",
-				zap.String("input_level", logLevel),
-				zap.Error(err))
-		} else {
-			fmt.Printf("日志级别解析失败，使用默认的 info 级别，输入的级别是: %s\n", logLevel)
-		}
+		// 仅输出到 stderr，避免产生日志噪音
+		fmt.Fprintf(os.Stderr, "[mlog] 日志级别解析失败: %s, 使用默认 info 级别\n", logLevel)
 		return
 	}
 
@@ -54,18 +65,18 @@ func zapUpdateLevel(logLevel string) {
 	// 更新级别缓存映射
 	levelCache[logLevel] = level
 
-	// 安全地记录级别更新
-	logger, ok := getLogger()
-	if ok {
-		// 为 UpdateLevel 调用创建带有正确 caller skip 的 logger
-		// 调用栈：用户代码 -> mlog.UpdateLevel() -> zapUpdateLevel() -> logger.Info()
-		// 需要跳过 2 层：zapUpdateLevel() 和 mlog.UpdateLevel()
-		loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
-		loggerWithSkip.Info("日志级别已更新为",
-			zap.String("level", logLevel),
-			zap.Stringer("parsed_level", level))
-	} else {
-		fmt.Printf("日志级别已更新为: %s:%v\n", logLevel, level)
+	// 仅在 Debug 级别记录级别更新（减少日志噪音）
+	if atomicLevel.Level() <= zapcore.DebugLevel {
+		logger, ok := getLogger()
+		if ok {
+			// 为 UpdateLevel 调用创建带有正确 caller skip 的 logger
+			// 调用栈：用户代码 -> mlog.UpdateLevel() -> zapUpdateLevel() -> logger.Debug()
+			// 需要跳过 2 层：zapUpdateLevel() 和 mlog.UpdateLevel()
+			loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
+			loggerWithSkip.Debug("日志级别已更新",
+				zap.String("level", logLevel),
+				zap.Stringer("parsed_level", level))
+		}
 	}
 }
 
@@ -105,22 +116,9 @@ func zapDebug(msg string, args ...any) {
 		// 需要跳过 2 层：zapDebug() 和 mlog.Debug()
 		loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
 
-		// 优化的格式化逻辑
-		if len(args) == 0 {
-			// 无参数情况，直接使用原始字符串，零分配
-			loggerWithSkip.Debug(msg)
-			return
-		}
-		// 有参数情况，使用字符串构建器
-		var sb strings.Builder
-		// 使用更高效的格式化方法
-		if err := formatToStringBuilder(&sb, msg, args...); err != nil {
-			// 格式化失败时的回退策略
-			loggerWithSkip.Debug(msg)
-			return
-		}
-		// 使用零拷贝转换避免额外的字符串分配
-		loggerWithSkip.Debug(sb.String())
+		// 格式化消息
+		formattedMsg := formatMessage(msg, args, false)
+		loggerWithSkip.Debug(formattedMsg)
 	}
 }
 
@@ -141,25 +139,9 @@ func zapInfo(arg0 string, args ...any) {
 		// 需要跳过 2 层：zapInfo() 和 mlog.Info()
 		loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
 
-		// 优化的格式化逻辑
-		if len(args) == 0 {
-			// 无参数情况，直接使用原始字符串，零分配
-			loggerWithSkip.Info(arg0)
-			return
-		}
-
-		// 有参数情况，使用字符串构建器
-		var sb strings.Builder
-
-		// 使用更高效的格式化方法
-		if err := formatToStringBuilder(&sb, arg0, args...); err != nil {
-			// 格式化失败时的回退策略
-			loggerWithSkip.Info(arg0)
-			return
-		}
-
-		// 使用零拷贝转换避免额外的字符串分配
-		loggerWithSkip.Info(sb.String())
+		// 格式化消息
+		formattedMsg := formatMessage(arg0, args, false)
+		loggerWithSkip.Info(formattedMsg)
 	}
 }
 
@@ -180,25 +162,9 @@ func zapWarn(arg0 string, args ...any) {
 		// 需要跳过 2 层：zapWarn() 和 mlog.Warn()
 		loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
 
-		// 优化的格式化逻辑
-		if len(args) == 0 {
-			// 无参数情况，直接使用原始字符串，零分配
-			loggerWithSkip.Warn(arg0)
-			return
-		}
-
-		// 有参数情况，使用字符串构建器
-		var sb strings.Builder
-
-		// 使用更高效的格式化方法
-		if err := formatToStringBuilder(&sb, arg0, args...); err != nil {
-			// 格式化失败时的回退策略
-			loggerWithSkip.Warn(arg0)
-			return
-		}
-
-		// 使用零拷贝转换避免额外的字符串分配
-		loggerWithSkip.Warn(sb.String())
+		// 格式化消息
+		formattedMsg := formatMessage(arg0, args, false)
+		loggerWithSkip.Warn(formattedMsg)
 	}
 }
 
@@ -219,25 +185,9 @@ func zapError(arg0 string, args ...any) {
 		// 需要跳过 2 层：zapError() 和 mlog.Error()
 		loggerWithSkip := logger.WithOptions(zap.AddCallerSkip(2))
 
-		// 优化的格式化逻辑
-		if len(args) == 0 {
-			// 无参数情况，直接使用原始字符串，零分配
-			loggerWithSkip.Error(arg0)
-			return
-		}
-
-		// 有参数情况，使用字符串构建器
-		var sb strings.Builder
-
-		// 使用更高效的格式化方法
-		if err := formatToStringBuilder(&sb, arg0, args...); err != nil {
-			// 格式化失败时的回退策略
-			loggerWithSkip.Error(arg0)
-			return
-		}
-
-		// 使用零拷贝转换避免额外的字符串分配
-		loggerWithSkip.Error(sb.String())
+		// 格式化消息
+		formattedMsg := formatMessage(arg0, args, false)
+		loggerWithSkip.Error(formattedMsg)
 	}
 }
 

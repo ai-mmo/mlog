@@ -236,16 +236,8 @@ func (al *AsyncLogger) processLogEntry(entry AsyncLogEntry) {
 		return
 	}
 
-	// 有参数情况，使用字符串构建器池
-	if len(entry.Extras) > 0 {
-		sb := al.sbPool.Get()
-		defer al.sbPool.Put(sb)
-
-		// 使用更高效的格式化方法
-		if err := formatToStringBuilder(sb, entry.Message, entry.Extras...); err == nil {
-			entry.Message = sb.String()
-		}
-	}
+	// 【并发安全修复】消息已经在发送前格式化完成，这里不再需要处理 Extras
+	// entry.Message 已经是格式化后的最终消息
 
 	// 直接使用zapcore写入日志条目，保持原始caller信息
 	if entry.Caller.Defined {
@@ -325,13 +317,22 @@ func (al *AsyncLogger) logAsyncWithSkip(level zapcore.Level, msg string, args []
 		caller = zapcore.NewEntryCaller(pc, file, line, true)
 	}
 
-	// 调试代码已移除
+	// 【并发安全修复 - 安全格式化方案】
+	// 使用 SafeFormatter 进行安全的参数序列化
+	// 这个方案会将所有参数转换为不可变的形式，完全避免并发问题
+	//
+	// 优势：
+	// 1. 完全避免 "concurrent map iteration and map write" fatal error
+	// 2. 不依赖用户的并发安全保证
+	// 3. 对于 map 类型，会立即创建快照（JSON 序列化）
+	// 4. 对于其他复杂类型，也会进行安全的转换
+	formattedMsg := SafeFormat(msg, args...)
 
 	entry := AsyncLogEntry{
 		Level:   level,
-		Message: msg,
+		Message: formattedMsg,
 		Fields:  fields,
-		Extras:  args,
+		Extras:  nil,    // 已经格式化完成，不再需要传递原始参数
 		Caller:  caller, // 保存原始调用者信息
 	}
 
