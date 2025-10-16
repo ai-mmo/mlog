@@ -49,7 +49,7 @@ func TestExtremeConcurrentMapAccess(t *testing.T) {
 					// 疯狂修改这个 map
 					// 添加数据
 					for k := 0; k < 20; k++ {
-						key := string(rune('A'+k))
+						key := string(rune('A' + k))
 						m[key] = counter + k
 					}
 					// 删除数据
