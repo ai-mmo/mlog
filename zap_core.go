@@ -118,6 +118,7 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 				MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
 				MaxAge:     zapConfig.RetentionDay,   // 保留天数
 				Compress:   zapConfig.EnableCompress, // 是否压缩
+				LocalTime:  true,                     // 使用本地时间
 			}
 
 			// 缓存新创建的 logger
@@ -133,6 +134,7 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 			MaxBackups: zapConfig.MaxBackups,     // 保留备份文件数量
 			MaxAge:     zapConfig.RetentionDay,   // 保留天数
 			Compress:   zapConfig.EnableCompress, // 是否压缩
+			LocalTime:  true,                     // 使用本地时间
 		}
 
 		// 保存主要的 lumberjack logger 引用，用于后续关闭
