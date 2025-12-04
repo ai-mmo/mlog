@@ -1,0 +1,245 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史记录，用于版本比较
+          
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          
+      - name: 配置 Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+      - name: 检查是否需要发布
+        id: check_release
+        run: |
+          # 获取最新的 commit 信息
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          # 检查 commit 信息中是否包含 [skip release] 或 [no release]
+          if echo "$COMMIT_MSG" | grep -qiE '\[(skip|no)[ -]?release\]'; then
+            echo "跳过发布：commit 信息包含跳过标记"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 检查是否为版本提交（避免重复发布）
+          if echo "$COMMIT_MSG" | grep -qE '^chore: bump version to v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "跳过发布：这是一个版本提交"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          
+      - name: 确定版本类型
+        id: version_type
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          # 根据 commit 信息确定版本类型
+          if echo "$COMMIT_MSG" | grep -qiE '^(feat|feature)(\(.*\))?!:|^BREAKING CHANGE:|breaking change'; then
+            echo "type=major" >> $GITHUB_OUTPUT
+            echo "检测到重大更新，将递增主版本号"
+          elif echo "$COMMIT_MSG" | grep -qiE '^(feat|feature)(\(.*\))?:'; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+            echo "检测到新功能，将递增次版本号"
+          else
+            echo "type=init" >> $GITHUB_OUTPUT
+            echo "检测到修复或其他更改，将递增补丁版本号"
+          fi
+          
+      - name: 运行测试
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          if find . -name "*_test.go" -type f | grep -q .; then
+            echo "运行测试..."
+            go test -v ./...
+          else
+            echo "未发现测试文件，跳过测试"
+          fi
+          
+      - name: 代码格式检查
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          # 检查代码格式
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "发现格式不规范的文件，正在格式化..."
+            echo "$unformatted"
+            go fmt ./...
+            git add .
+            git commit -m "style: 自动格式化代码 [skip ci]" || true
+          fi
+          
+          # 运行 go vet
+          go vet ./...
+          
+      - name: 计算新版本号
+        id: new_version
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          # 获取最新版本
+          LATEST_VERSION=$(git tag -l | grep "^v" | sort -V | tail -1)
+          
+          if [ -z "$LATEST_VERSION" ]; then
+            # 首次发布
+            case "${{ steps.version_type.outputs.type }}" in
+              "major")
+                NEW_VERSION="v1.0.0"
+                ;;
+              "minor")
+                NEW_VERSION="v0.1.0"
+                ;;
+              *)
+                NEW_VERSION="v0.0.1"
+                ;;
+            esac
+          else
+            # 递增版本号
+            VERSION_WITHOUT_V=${LATEST_VERSION#v}
+            IFS='.' read -ra PARTS <<< "$VERSION_WITHOUT_V"
+            MAJOR=${PARTS[0]}
+            MINOR=${PARTS[1]}
+            PATCH=${PARTS[2]}
+            
+            case "${{ steps.version_type.outputs.type }}" in
+              "major")
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              "minor")
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              *)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+            
+            NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+          fi
+          
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "新版本号: $NEW_VERSION"
+          
+      - name: 更新版本文件
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.new_version.outputs.version }}"
+          VERSION_WITHOUT_V=${VERSION#v}
+          MODULE_NAME=$(grep "^module " go.mod | awk '{print $2}')
+          
+          # 更新 version.go
+          if [ -f "version.go" ]; then
+            sed -i "s/const Version = \".*\"/const Version = \"$VERSION_WITHOUT_V\"/" version.go
+            git add version.go
+          fi
+          
+          # 更新 README.md
+          if [ -f "README.md" ] && grep -q "go get" README.md 2>/dev/null; then
+            sed -i "s|go get $MODULE_NAME@v[0-9]*\.[0-9]*\.[0-9]*|go get $MODULE_NAME@$VERSION|g" README.md
+            git add README.md
+          fi
+          
+          # 提交版本更新
+          if ! git diff-index --quiet HEAD --; then
+            git commit -m "chore: bump version to $VERSION [skip ci]"
+            git push origin ${{ github.ref_name }}
+          fi
+          
+      - name: 生成变更日志
+        id: changelog
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.new_version.outputs.version }}"
+          LATEST_VERSION=$(git tag -l | grep "^v" | sort -V | tail -1)
+          
+          # 生成变更日志
+          echo "## $VERSION ($(date +%Y-%m-%d))" > changelog.md
+          echo "" >> changelog.md
+          
+          # 获取 commit 信息
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "$COMMIT_MSG" >> changelog.md
+          echo "" >> changelog.md
+          
+          # 添加提交记录
+          if [ -n "$LATEST_VERSION" ]; then
+            echo "### 提交记录:" >> changelog.md
+            git log --oneline "$LATEST_VERSION"..HEAD >> changelog.md
+          else
+            echo "### 提交记录 (首次发布):" >> changelog.md
+            git log --oneline --max-count=10 >> changelog.md
+          fi
+          
+          # 输出变更日志内容供后续使用
+          CHANGELOG_CONTENT=$(cat changelog.md)
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      - name: 创建 Git 标签
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.new_version.outputs.version }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          git tag -a "$VERSION" -m "$COMMIT_MSG"
+          git push origin "$VERSION"
+          
+      - name: 创建 GitHub Release
+        if: steps.check_release.outputs.should_release == 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.new_version.outputs.version }}
+          release_name: Release ${{ steps.new_version.outputs.version }}
+          body: ${{ steps.changelog.outputs.content }}
+          draft: false
+          prerelease: false
+          
+      - name: 发布信息
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.new_version.outputs.version }}"
+          MODULE_NAME=$(grep "^module " go.mod | awk '{print $2}')
+          
+          echo "🎉 版本 $VERSION 发布成功!"
+          echo ""
+          echo "发布信息:"
+          echo "- 模块名称: $MODULE_NAME"
+          echo "- 版本: $VERSION"
+          echo "- 时间: $(date)"
+          echo "- 分支: ${{ github.ref_name }}"
+          echo "- 提交: $(git rev-parse --short HEAD)"
+          echo ""
+          echo "使用方法:"
+          echo "  go get $MODULE_NAME@$VERSION"
