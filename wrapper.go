@@ -46,6 +46,17 @@ func LoadConfig(configPath string) (*ZapConfig, error) {
 	return &config, nil
 }
 
+// GetConfig 获取当前的 ZapConfig 配置
+// 返回当前正在使用的日志配置的副本
+func GetConfig() *ZapConfig {
+	globalMutex.Lock()
+	defer globalMutex.Unlock()
+
+	// 返回配置的副本，避免外部修改影响内部状态
+	config := zapConfig
+	return &config
+}
+
 func InitialZap(name string, id uint64, logLevel string, zc *ZapConfig) {
 	globalMutex.Lock()
 	defer globalMutex.Unlock()
