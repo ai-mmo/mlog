@@ -93,7 +93,7 @@ func zapCheckLevel(logLevel string) bool {
 	levelCacheMutex.RLock()
 	checkLevel, ok := levelCache[logLevel]
 	levelCacheMutex.RUnlock()
-	
+
 	if !ok {
 		// 如果缓存中没有，才进行解析
 		parsedLevel, err := zapcore.ParseLevel(logLevel)
