@@ -30,13 +30,23 @@ func initZap(serviceName string, serviceID uint64) (logger *zap.Logger) {
 	zapCores = make([]*ZapCore, 0)
 
 	levels := zapConfig.Levels()
-	length := len(levels)
-	cores := make([]zapcore.Core, 0, length)
+	cores := make([]zapcore.Core, 0)
 
-	for i := 0; i < length; i++ {
-		core := NewZapCoreWithService(levels[i], serviceName, serviceID)
+	if zapConfig.SingleFile {
+		// 【修复】单文件模式：只创建一个Debug级别的Core
+		// 这个Core会处理所有 >= Debug 且 >= atomicLevel 的日志
+		// 避免多个Core重复写入同一个文件
+		core := NewZapCoreWithService(zapcore.DebugLevel, serviceName, serviceID)
 		zapCores = append(zapCores, core)
 		cores = append(cores, core)
+	} else {
+		// 多文件模式：为每个级别创建独立的Core
+		// 每个Core只处理自己级别的日志，写入对应的文件
+		for i := 0; i < len(levels); i++ {
+			core := NewZapCoreWithService(levels[i], serviceName, serviceID)
+			zapCores = append(zapCores, core)
+			cores = append(cores, core)
+		}
 	}
 	coreMutex.Unlock()
 

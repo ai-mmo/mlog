@@ -41,9 +41,18 @@ func NewZapCoreWithService(level zapcore.Level, svcName string, svcID uint64) *Z
 	encoder := zapConfig.Encoder()
 	entity.encoder = encoder
 
-	// 使用动态级别控制器
+	// 【修复】使用动态级别控制器
+	// 根据SingleFile配置决定过滤逻辑：
+	// - 单文件模式：每个Core处理 >= 自己级别的所有日志（避免重复）
+	// - 多文件模式：每个Core只处理 == 自己级别的日志（分文件）
 	levelEnabler := zap.LevelEnablerFunc(func(l zapcore.Level) bool {
-		// 如果当前日志级别小于等于配置的级别，则允许输出
+		if zapConfig.SingleFile {
+			// 单文件模式：Core的level是它能记录的最低级别
+			// 只要日志级别 >= Core的level 且 >= 全局设置的级别，就应该记录
+			return l >= level && l >= atomicLevel.Level()
+		}
+		// 多文件模式：每个Core只处理完全匹配的级别
+		// 避免同一条日志被多个Core重复写入
 		return l == level && l >= atomicLevel.Level()
 	})
 	entity.Core = zapcore.NewCore(encoder, syncer, levelEnabler)
@@ -150,8 +159,15 @@ func (z *ZapCore) createWriteSyncer(currentServiceName string, currentServiceID 
 }
 
 func (z *ZapCore) Enabled(level zapcore.Level) bool {
-	// 检查是否与当前核心级别相同，并且大于等于全局设置的级别
-	return z.level == level && level >= atomicLevel.Level()
+	// 【修复】根据SingleFile配置决定过滤逻辑
+	currentAtomicLevel := atomicLevel.Level()
+
+	if zapConfig.SingleFile {
+		// 单文件模式：Core的level是它能记录的最低级别
+		return level >= z.level && level >= currentAtomicLevel
+	}
+	// 多文件模式：每个Core只处理完全匹配的级别
+	return level == z.level && level >= currentAtomicLevel
 }
 
 func (z *ZapCore) With(fields []zapcore.Field) zapcore.Core {
@@ -199,10 +215,9 @@ func (z *ZapCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		syncer := z.createWriteSyncer(z.serviceName, z.serviceID, specialDirectory)
 		tempCore := zapcore.NewCore(z.encoder, syncer, z.level)
 		return tempCore.Write(entry, filteredFields)
-	} else {
-		// 使用原始的 Core（写入主日志目录）
-		return z.Core.Write(entry, filteredFields)
 	}
+	// 使用原始的 Core（写入主日志目录）
+	return z.Core.Write(entry, filteredFields)
 }
 
 func (z *ZapCore) Sync() error {

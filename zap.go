@@ -6,13 +6,18 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+// levelCacheMutex 保护 levelCache 的并发访问
+var levelCacheMutex sync.RWMutex
+
 // levelCache 级别缓存映射，用于快速查找日志级别。
 // 避免重复解析字符串级别，提高性能。
+// 注意：访问时需要使用 levelCacheMutex 保护
 var levelCache = map[string]zapcore.Level{
 	"debug":  zapcore.DebugLevel,
 	"info":   zapcore.InfoLevel,
@@ -55,15 +60,18 @@ func zapUpdateLevel(logLevel string) {
 		return
 	}
 
-	// 更新 zapConfig 配置（如果已经持有锁则跳过）
-	// 注意：这里假设调用者已经持有了适当的锁
+	// 更新 zapConfig 配置（使用锁保护并发写入）
+	globalMutex.Lock()
 	zapConfig.Level = logLevel
+	globalMutex.Unlock()
 
 	// 使用原子级别控制器动态更新日志级别
 	atomicLevel.SetLevel(level)
 
-	// 更新级别缓存映射
+	// 更新级别缓存映射（使用锁保护）
+	levelCacheMutex.Lock()
 	levelCache[logLevel] = level
+	levelCacheMutex.Unlock()
 
 	// 仅在 Debug 级别记录级别更新（减少日志噪音）
 	if atomicLevel.Level() <= zapcore.DebugLevel {
@@ -81,8 +89,11 @@ func zapUpdateLevel(logLevel string) {
 }
 
 func zapCheckLevel(logLevel string) bool {
-	// 使用缓存获取级别，避免重复解析
+	// 使用缓存获取级别，避免重复解析（使用读锁）
+	levelCacheMutex.RLock()
 	checkLevel, ok := levelCache[logLevel]
+	levelCacheMutex.RUnlock()
+	
 	if !ok {
 		// 如果缓存中没有，才进行解析
 		parsedLevel, err := zapcore.ParseLevel(logLevel)
@@ -90,8 +101,10 @@ func zapCheckLevel(logLevel string) bool {
 			return false
 		}
 		checkLevel = parsedLevel
-		// 添加到缓存
+		// 添加到缓存（使用写锁）
+		levelCacheMutex.Lock()
 		levelCache[logLevel] = checkLevel
+		levelCacheMutex.Unlock()
 	}
 
 	// 使用原子级别控制器获取当前级别

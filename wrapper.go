@@ -229,6 +229,8 @@ func UpdateLevel(logLevel string) {
 	if atomicLevel.Level() != zapcore.InvalidLevel {
 		updateLevelCacheOptimized(atomicLevel.Level())
 	}
+	// 更新异步日志器的级别缓存
+	UpdateAsyncLevelCache()
 }
 
 // CheckLevel 检查指定的日志级别是否有效
