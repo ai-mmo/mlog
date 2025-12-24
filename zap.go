@@ -60,10 +60,9 @@ func zapUpdateLevel(logLevel string) {
 		return
 	}
 
-	// 更新 zapConfig 配置（使用锁保护并发写入）
-	globalMutex.Lock()
+	// 注意：此函数已经在 UpdateLevel 中被全局锁保护，这里不需要额外加锁
+	// 更新 zapConfig 配置
 	zapConfig.Level = logLevel
-	globalMutex.Unlock()
 
 	// 使用原子级别控制器动态更新日志级别
 	atomicLevel.SetLevel(level)

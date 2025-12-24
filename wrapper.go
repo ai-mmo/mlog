@@ -224,6 +224,10 @@ func isInitialized() bool {
 
 // UpdateLevel 动态更新日志级别
 func UpdateLevel(logLevel string) {
+	// 使用全局锁保护整个更新过程，避免竞态条件
+	globalMutex.Lock()
+	defer globalMutex.Unlock()
+
 	zapUpdateLevel(logLevel)
 	// 更新优化的级别缓存
 	if atomicLevel.Level() != zapcore.InvalidLevel {

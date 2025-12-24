@@ -89,12 +89,14 @@ func NewLevelCache() *LevelCache {
 
 // updateCache 更新级别缓存
 func (lc *LevelCache) updateCache() {
-	logger, ok := getLogger()
-	if !ok {
+	// 使用优化的 logger 获取方式，避免竞态条件
+	logger := getLoggerOptimized()
+	if logger == nil {
 		return
 	}
 
 	core := logger.Core()
+	// 使用原子操作更新所有级别缓存
 	atomic.StoreInt32(&lc.debugEnabled, boolToInt32(core.Enabled(zapcore.DebugLevel)))
 	atomic.StoreInt32(&lc.infoEnabled, boolToInt32(core.Enabled(zapcore.InfoLevel)))
 	atomic.StoreInt32(&lc.warnEnabled, boolToInt32(core.Enabled(zapcore.WarnLevel)))
@@ -558,7 +560,12 @@ func ClearAsyncCache() {
 
 // UpdateAsyncLevelCache 更新全局异步日志器的级别缓存
 func UpdateAsyncLevelCache() {
-	if logger, ok := getAsyncLogger(); ok {
+	// 使用读锁安全地获取异步日志器
+	asyncMutex.RLock()
+	logger := globalAsyncLogger
+	asyncMutex.RUnlock()
+
+	if logger != nil {
 		logger.UpdateLevelCache()
 	}
 }
