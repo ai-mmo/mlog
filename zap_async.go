@@ -18,11 +18,12 @@ var (
 
 // AsyncLogEntry 异步日志条目
 type AsyncLogEntry struct {
-	Level   zapcore.Level
-	Message string
-	Fields  []zap.Field
-	Extras  []any
-	Caller  zapcore.EntryCaller // 保存原始调用者信息
+	Level     zapcore.Level
+	Message   string
+	Fields    []zap.Field
+	Extras    []any
+	Caller    zapcore.EntryCaller // 保存原始调用者信息
+	Timestamp time.Time           // 日志产生时的时间戳
 }
 
 // OptimizedSkipCache 优化的调用栈跳过层数缓存
@@ -310,6 +311,10 @@ func (al *AsyncLogger) logAsyncWithSkip(level zapcore.Level, msg string, args []
 		return
 	}
 
+	// 【关键修复】在日志产生时立即捕获时间戳
+	// 这确保时间戳反映的是日志产生的真实时间，而非异步处理时的时间
+	timestamp := time.Now()
+
 	// 动态检测调用路径并调整skip值
 	adjustedSkip := al.detectAndAdjustSkip(skip)
 
@@ -331,11 +336,12 @@ func (al *AsyncLogger) logAsyncWithSkip(level zapcore.Level, msg string, args []
 	formattedMsg := SafeFormat(msg, args...)
 
 	entry := AsyncLogEntry{
-		Level:   level,
-		Message: formattedMsg,
-		Fields:  fields,
-		Extras:  nil,    // 已经格式化完成，不再需要传递原始参数
-		Caller:  caller, // 保存原始调用者信息
+		Level:     level,
+		Message:   formattedMsg,
+		Fields:    fields,
+		Extras:    nil,       // 已经格式化完成，不再需要传递原始参数
+		Caller:    caller,    // 保存原始调用者信息
+		Timestamp: timestamp, // 保存日志产生时的时间戳
 	}
 
 	if al.dropOnFull {
@@ -418,10 +424,10 @@ func (al *AsyncLogger) isZapFunction(funcName string) bool {
 
 // writeLogEntryWithCaller 使用保存的caller信息写入日志条目
 func (al *AsyncLogger) writeLogEntryWithCaller(logger *zap.Logger, entry AsyncLogEntry) {
-	// 创建zapcore.Entry，使用保存的caller信息
+	// 创建zapcore.Entry，使用保存的caller信息和时间戳
 	zapEntry := zapcore.Entry{
 		Level:      entry.Level,
-		Time:       time.Now(),
+		Time:       entry.Timestamp, // 【关键修复】使用日志产生时的时间戳，而非写入时的时间
 		LoggerName: "",
 		Message:    entry.Message,
 		Caller:     entry.Caller,
